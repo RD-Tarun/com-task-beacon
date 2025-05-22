@@ -125,11 +125,13 @@ if __name__ == "__main__":
 
 ---
 
-## Execution
+## IoC
 
 ![image](https://github.com/user-attachments/assets/342278b2-3e80-4802-9799-409bf0719ffc)
 
 > Bottom half cut due to personal data(extracted by the exploit)
+
+---
 
 ## Deployment
 
@@ -144,8 +146,8 @@ if __name__ == "__main__":
 
 ## References
 
-- Windows COM API for task scheduling
-- PowerShell Remoting and System Management Cmdlets
-- HTTP Beaconing Techniques
+- [Windows COM API for task scheduling](https://learn.microsoft.com/en-us/windows/win32/api/_com/)
+- [PowerShell Remoting and System Management Cmdlets](https://learn.microsoft.com/en-us/powershell/scripting/learn/ps101/08-powershell-remoting?view=powershell-7.5)
+- [HTTP Beaconing Techniques](https://hstechdocs.helpsystems.com/manuals/cobaltstrike/current/userguide/content/topics/listener-infrastructure_beacon-http-https.htm)
 
 ---
