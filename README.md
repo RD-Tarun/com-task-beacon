@@ -127,7 +127,7 @@ if __name__ == "__main__":
 
 ## Execution
 
-![image](https://github.com/user-attachments/assets/27a80367-d323-4dc8-9705-cc839ab66859)
+![image](https://github.com/user-attachments/assets/342278b2-3e80-4802-9799-409bf0719ffc)
 
 > Bottom half cut due to personal data(extracted by the exploit)
 
